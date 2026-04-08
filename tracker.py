@@ -14,6 +14,7 @@ def init_db():
         event_type TEXT,
         email TEXT,
         batch TEXT,
+        ab_version TEXT,
         timestamp TEXT,
         ip TEXT,
         user_agent TEXT
@@ -21,13 +22,13 @@ def init_db():
     conn.commit()
     conn.close()
 
-def log_event(event_type, email, batch, ip, user_agent):
+def log_event(event_type, email, batch, ab_version, ip, user_agent):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''INSERT INTO events
-        (event_type, email, batch, timestamp, ip, user_agent)
-        VALUES (?, ?, ?, ?, ?, ?)''',
-        (event_type, email, batch,
+        (event_type, email, batch, ab_version, timestamp, ip, user_agent)
+        VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        (event_type, email, batch, ab_version,
          datetime.datetime.utcnow().isoformat(),
          ip, user_agent))
     conn.commit()
@@ -37,9 +38,10 @@ def log_event(event_type, email, batch, ip, user_agent):
 def track_open():
     email = request.args.get('email', '')
     batch = request.args.get('batch', '')
+    version = request.args.get('version', '')
     ip = request.remote_addr
     ua = request.headers.get('User-Agent', '')
-    log_event('open', email, batch, ip, ua)
+    log_event('open', email, batch, version, ip, ua)
     pixel = (
         b'GIF89a\x01\x00\x01\x00\x80\x00\x00'
         b'\xff\xff\xff\x00\x00\x00!\xf9\x04'
@@ -52,9 +54,10 @@ def track_open():
 def track_click():
     email = request.args.get('email', '')
     redirect_url = request.args.get('redirect', 'https://calendly.com/jpfigallo-concierge/30min')
+    version = request.args.get('version', '')
     ip = request.remote_addr
     ua = request.headers.get('User-Agent', '')
-    log_event('click', email, '', ip, ua)
+    log_event('click', email, '', version, ip, ua)
     return redirect(redirect_url)
 
 @app.route('/stats')
@@ -68,11 +71,23 @@ def stats():
         FROM events WHERE event_type='open'
         GROUP BY batch
     """).fetchall()
+    opens_by_version = c.execute("""
+        SELECT ab_version, COUNT(DISTINCT email)
+        FROM events WHERE event_type='open'
+        GROUP BY ab_version
+    """).fetchall()
+    clicks_by_version = c.execute("""
+        SELECT ab_version, COUNT(DISTINCT email)
+        FROM events WHERE event_type='click'
+        GROUP BY ab_version
+    """).fetchall()
     conn.close()
     return {
         "unique_opens": opens,
         "unique_clicks": clicks,
-        "opens_by_batch": dict(by_batch)
+        "opens_by_batch": dict(by_batch),
+        "opens_by_version": dict(opens_by_version),
+        "clicks_by_version": dict(clicks_by_version)
     }
 
 if __name__ == '__main__':
