@@ -89,7 +89,23 @@ def stats():
         "opens_by_version": dict(opens_by_version),
         "clicks_by_version": dict(clicks_by_version)
     }
-
+@app.route('/webhook/calendly', methods=['POST'])
+def calendly_webhook():
+    try:
+        data = request.get_json(silent=True) or {}
+        try:
+            email = data['payload']['invitee']['email'].strip().lower()
+        except (KeyError, TypeError):
+            try:
+                email = data['invitee']['email'].strip().lower()
+            except (KeyError, TypeError):
+                email = None
+        if not email:
+            return {'status': 'no_email'}, 200
+        log_event('booking', email, '', request.remote_addr, request.headers.get('User-Agent', ''))
+        return {'status': 'success', 'email': email}, 200
+    except Exception as e:
+        return {'status': 'error', 'reason': str(e)}, 500
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5000))
