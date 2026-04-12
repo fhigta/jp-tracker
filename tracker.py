@@ -1,6 +1,7 @@
 from flask import Flask, request, redirect, Response
 import sqlite3
 import datetime
+import json
 import os
 
 app = Flask(__name__)
@@ -106,6 +107,47 @@ def calendly_webhook():
         return {'status': 'success', 'email': email}, 200
     except Exception as e:
         return {'status': 'error', 'reason': str(e)}, 500
+@app.route('/crm/update', methods=['POST'])
+def crm_update():
+    try:
+        data = request.get_json(silent=True) or []
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS crm_data (
+            id INTEGER PRIMARY KEY,
+            data TEXT,
+            updated_at TEXT
+        )''')
+        c.execute('''INSERT INTO crm_data (id, data, updated_at)
+                     VALUES (1, ?, ?)
+                     ON CONFLICT(id) DO UPDATE SET
+                     data=excluded.data,
+                     updated_at=excluded.updated_at''',
+                  (json.dumps(data), datetime.datetime.utcnow().isoformat()))
+        conn.commit()
+        conn.close()
+        return {'status': 'ok', 'rows': len(data)}, 200
+    except Exception as e:
+        return {'status': 'error', 'reason': str(e)}, 500
+
+@app.route('/crm', methods=['GET'])
+def crm_get():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS crm_data (
+            id INTEGER PRIMARY KEY,
+            data TEXT,
+            updated_at TEXT
+        )''')
+        row = c.execute('SELECT data, updated_at FROM crm_data WHERE id=1').fetchone()
+        conn.close()
+        if row:
+            return {'data': json.loads(row[0]), 'updated_at': row[1]}, 200
+        return {'data': [], 'updated_at': None}, 200
+    except Exception as e:
+        return {'status': 'error', 'reason': str(e)}, 500
+
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5000))
