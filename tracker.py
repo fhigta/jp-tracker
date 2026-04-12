@@ -1,10 +1,12 @@
 from flask import Flask, request, redirect, Response
+from flask_cors import CORS
 import sqlite3
 import datetime
 import json
 import os
 
 app = Flask(__name__)
+CORS(app)
 DB_PATH = "tracking.db"
 
 def init_db():
