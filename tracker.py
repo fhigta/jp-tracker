@@ -266,12 +266,18 @@ def health():
             connected = True
         except Exception as e:
             error = str(e)
+    # Show any env var keys that look DB-related (names only, not values)
+    db_keys = sorted(
+        k for k in os.environ
+        if any(x in k.upper() for x in ['DATABASE', 'POSTGRES', 'PG', 'NEON', 'DB'])
+    )
     return {
         'DATABASE_URL_set': bool(url),
         'DATABASE_URL_length': len(url),
         'DATABASE_URL_prefix': (url[:35] + '...') if len(url) > 35 else url,
         'connected': connected,
         'error': error,
+        'db_related_env_keys': db_keys,
     }
 
 
