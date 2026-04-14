@@ -252,6 +252,29 @@ def crm_get():
         return {'status': 'error', 'reason': str(e)}, 500
 
 
+# ── DIAGNOSTICS ──────────────────────────────────────────────────────────────
+
+@app.route('/health')
+def health():
+    url = _db_url()
+    connected = False
+    error = None
+    if url:
+        try:
+            conn = get_conn()
+            conn.close()
+            connected = True
+        except Exception as e:
+            error = str(e)
+    return {
+        'DATABASE_URL_set': bool(url),
+        'DATABASE_URL_length': len(url),
+        'DATABASE_URL_prefix': (url[:35] + '...') if len(url) > 35 else url,
+        'connected': connected,
+        'error': error,
+    }
+
+
 # ── STARTUP ───────────────────────────────────────────────────────────────────
 
 init_db()
