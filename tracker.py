@@ -277,7 +277,11 @@ def health():
 
 # ── STARTUP ───────────────────────────────────────────────────────────────────
 
-init_db()
+try:
+    init_db()
+    print('[tracker] init_db() OK')
+except Exception as _init_err:
+    print(f'[tracker] init_db() FAILED — app will start but DB ops will error: {_init_err}')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
