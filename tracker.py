@@ -102,6 +102,37 @@ def stats():
         "opens_by_version": dict(opens_by_version),
         "clicks_by_version": dict(clicks_by_version)
     }
+@app.route('/events')
+def events():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT, email TEXT, batch TEXT, ab_version TEXT,
+        timestamp TEXT, ip TEXT, user_agent TEXT
+    )''')
+    rows = c.execute("""
+        SELECT event_type,
+               lower(email)      AS email,
+               MIN(ab_version)   AS ab_version,
+               MIN(timestamp)    AS first_seen,
+               MAX(timestamp)    AS last_seen,
+               COUNT(*)          AS count
+        FROM events
+        WHERE event_type IN ('open', 'click')
+        GROUP BY event_type, lower(email)
+        ORDER BY last_seen DESC
+    """).fetchall()
+    conn.close()
+    return json.dumps([{
+        'event_type': r[0],
+        'email':      r[1],
+        'ab_version': r[2],
+        'first_seen': r[3],
+        'last_seen':  r[4],
+        'count':      r[5],
+    } for r in rows])
+
 @app.route('/webhook/calendly', methods=['POST'])
 def calendly_webhook():
     try:
