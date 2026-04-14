@@ -28,6 +28,16 @@ def init_db():
 def log_event(event_type, email, batch, ab_version, ip, user_agent):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type TEXT,
+        email TEXT,
+        batch TEXT,
+        ab_version TEXT,
+        timestamp TEXT,
+        ip TEXT,
+        user_agent TEXT
+    )''')
     c.execute('''INSERT INTO events
         (event_type, email, batch, ab_version, timestamp, ip, user_agent)
         VALUES (?, ?, ?, ?, ?, ?, ?)''',
@@ -150,7 +160,8 @@ def crm_get():
     except Exception as e:
         return {'status': 'error', 'reason': str(e)}, 500
 
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
