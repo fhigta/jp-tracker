@@ -99,7 +99,10 @@ def track_click():
 
 @app.route('/stats')
 def stats():
-    conn = get_conn()
+    try:
+        conn = get_conn()
+    except Exception as e:
+        return {'status': 'error', 'reason': str(e)}, 500
     try:
         with conn.cursor() as c:
             c.execute("SELECT COUNT(DISTINCT email) FROM events WHERE event_type='open'")
@@ -143,7 +146,10 @@ def stats():
 
 @app.route('/events')
 def events():
-    conn = get_conn()
+    try:
+        conn = get_conn()
+    except Exception as e:
+        return json.dumps({'error': str(e)}), 500
     try:
         with conn.cursor() as c:
             c.execute("""
