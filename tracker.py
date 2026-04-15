@@ -90,7 +90,8 @@ def track_click():
     email        = request.args.get('email', '')
     redirect_url = request.args.get('redirect', 'https://calendly.com/jpfigallo-concierge/30min')
     version      = request.args.get('version', '')
-    log_event('click', email, '', version,
+    batch        = request.args.get('batch', '')
+    log_event('click', email, batch, version,
               request.remote_addr, request.headers.get('User-Agent', ''))
     return redirect(redirect_url)
 
@@ -116,7 +117,14 @@ def stats():
                 FROM events WHERE event_type='open'
                 GROUP BY batch
             """)
-            by_batch = dict(c.fetchall())
+            opens_by_batch = dict(c.fetchall())
+
+            c.execute("""
+                SELECT batch, COUNT(DISTINCT email)
+                FROM events WHERE event_type='click'
+                GROUP BY batch
+            """)
+            clicks_by_batch = dict(c.fetchall())
 
             c.execute("""
                 SELECT ab_version, COUNT(DISTINCT email)
@@ -135,7 +143,8 @@ def stats():
         return {
             'unique_opens':      opens,
             'unique_clicks':     clicks,
-            'opens_by_batch':    by_batch,
+            'opens_by_batch':    opens_by_batch,
+            'clicks_by_batch':   clicks_by_batch,
             'opens_by_version':  opens_by_version,
             'clicks_by_version': clicks_by_version,
         }
