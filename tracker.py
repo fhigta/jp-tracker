@@ -140,6 +140,17 @@ def stats():
             """)
             clicks_by_version = dict(c.fetchall())
 
+            # Count bounced from CRM mirror
+            c.execute('SELECT data FROM crm_data WHERE id = 1')
+            crm_row = c.fetchone()
+            bounced = 0
+            if crm_row:
+                crm_rows = json.loads(crm_row[0])
+                bounced = sum(
+                    1 for r in crm_rows
+                    if (r.get('status') or '').upper().strip() == 'BOUNCED'
+                )
+
         return {
             'unique_opens':      opens,
             'unique_clicks':     clicks,
@@ -147,6 +158,7 @@ def stats():
             'clicks_by_batch':   clicks_by_batch,
             'opens_by_version':  opens_by_version,
             'clicks_by_version': clicks_by_version,
+            'bounced':           bounced,
         }
     except Exception as e:
         return {'status': 'error', 'reason': str(e)}, 500
