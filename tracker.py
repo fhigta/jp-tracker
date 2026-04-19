@@ -106,36 +106,36 @@ def stats():
         return {'status': 'error', 'reason': str(e)}, 500
     try:
         with conn.cursor() as c:
-            c.execute("SELECT COUNT(DISTINCT email) FROM events WHERE event_type='open'")
+            c.execute("SELECT COUNT(DISTINCT email) FROM events WHERE event_type='open' AND email <> ''")
             opens = c.fetchone()[0]
 
-            c.execute("SELECT COUNT(DISTINCT email) FROM events WHERE event_type='click'")
+            c.execute("SELECT COUNT(DISTINCT email) FROM events WHERE event_type='click' AND email <> ''")
             clicks = c.fetchone()[0]
 
             c.execute("""
                 SELECT batch, COUNT(DISTINCT email)
-                FROM events WHERE event_type='open'
+                FROM events WHERE event_type='open' AND email <> ''
                 GROUP BY batch
             """)
             opens_by_batch = dict(c.fetchall())
 
             c.execute("""
                 SELECT batch, COUNT(DISTINCT email)
-                FROM events WHERE event_type='click'
+                FROM events WHERE event_type='click' AND email <> ''
                 GROUP BY batch
             """)
             clicks_by_batch = dict(c.fetchall())
 
             c.execute("""
                 SELECT ab_version, COUNT(DISTINCT email)
-                FROM events WHERE event_type='open'
+                FROM events WHERE event_type='open' AND email <> ''
                 GROUP BY ab_version
             """)
             opens_by_version = dict(c.fetchall())
 
             c.execute("""
                 SELECT ab_version, COUNT(DISTINCT email)
-                FROM events WHERE event_type='click'
+                FROM events WHERE event_type='click' AND email <> ''
                 GROUP BY ab_version
             """)
             clicks_by_version = dict(c.fetchall())
@@ -181,7 +181,7 @@ def events():
                        MAX(timestamp)  AS last_seen,
                        COUNT(*)        AS count
                 FROM events
-                WHERE event_type IN ('open', 'click')
+                WHERE event_type IN ('open', 'click') AND email <> ''
                 GROUP BY event_type, lower(email)
                 ORDER BY last_seen DESC
             """)
