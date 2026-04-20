@@ -106,43 +106,10 @@ def stats():
         return {'status': 'error', 'reason': str(e)}, 500
     try:
         with conn.cursor() as c:
-            c.execute("SELECT COUNT(DISTINCT email) FROM events WHERE event_type='open' AND email <> ''")
-            opens = c.fetchone()[0]
-
-            c.execute("SELECT COUNT(DISTINCT email) FROM events WHERE event_type='click' AND email <> ''")
-            clicks = c.fetchone()[0]
-
-            c.execute("""
-                SELECT batch, COUNT(DISTINCT email)
-                FROM events WHERE event_type='open' AND email <> ''
-                GROUP BY batch
-            """)
-            opens_by_batch = dict(c.fetchall())
-
-            c.execute("""
-                SELECT batch, COUNT(DISTINCT email)
-                FROM events WHERE event_type='click' AND email <> ''
-                GROUP BY batch
-            """)
-            clicks_by_batch = dict(c.fetchall())
-
-            c.execute("""
-                SELECT ab_version, COUNT(DISTINCT email)
-                FROM events WHERE event_type='open' AND email <> ''
-                GROUP BY ab_version
-            """)
-            opens_by_version = dict(c.fetchall())
-
-            c.execute("""
-                SELECT ab_version, COUNT(DISTINCT email)
-                FROM events WHERE event_type='click' AND email <> ''
-                GROUP BY ab_version
-            """)
-            clicks_by_version = dict(c.fetchall())
-
-            # Count bounced from CRM mirror
+            # Build CRM email -> batch_time lookup from the Neon mirror
             c.execute('SELECT data FROM crm_data WHERE id = 1')
             crm_row = c.fetchone()
+            crm_batch_map = {}
             bounced = 0
             if crm_row:
                 crm_rows = json.loads(crm_row[0])
@@ -150,10 +117,60 @@ def stats():
                     1 for r in crm_rows
                     if (r.get('status') or '').upper().strip() == 'BOUNCED'
                 )
+                for r in crm_rows:
+                    email = (r.get('email') or '').strip().lower()
+                    bt    = (r.get('batch_time') or '').strip().lower()
+                    isd   = (r.get('initial_sent_date') or '').strip()
+                    if email and bt and isd:
+                        crm_batch_map[email] = bt
+
+            def resolve_batch(email, stored_batch):
+                """Return stored batch if set; fall back to CRM lookup for pre-batch-param sends."""
+                if stored_batch:
+                    return stored_batch
+                return crm_batch_map.get(email.lower(), '')
+
+            # Fetch raw event rows (non-empty email only)
+            c.execute("""
+                SELECT event_type, lower(email) AS email, batch, ab_version
+                FROM events
+                WHERE event_type IN ('open', 'click') AND email <> ''
+            """)
+            raw_events = c.fetchall()
+
+        # Aggregate with CRM-resolved batch labels
+        open_emails         = set()
+        click_emails        = set()
+        opens_by_batch      = {}
+        clicks_by_batch     = {}
+        opens_by_version    = {}
+        clicks_by_version   = {}
+        # track per-batch distinct emails
+        open_emails_batch   = {}
+        click_emails_batch  = {}
+        open_emails_version = {}
+        click_emails_version= {}
+
+        for etype, email, batch, version in raw_events:
+            batch   = resolve_batch(email, batch)
+            version = version or ''
+            if etype == 'open':
+                open_emails.add(email)
+                open_emails_batch.setdefault(batch, set()).add(email)
+                open_emails_version.setdefault(version, set()).add(email)
+            elif etype == 'click':
+                click_emails.add(email)
+                click_emails_batch.setdefault(batch, set()).add(email)
+                click_emails_version.setdefault(version, set()).add(email)
+
+        opens_by_batch    = {k: len(v) for k, v in open_emails_batch.items()}
+        clicks_by_batch   = {k: len(v) for k, v in click_emails_batch.items()}
+        opens_by_version  = {k: len(v) for k, v in open_emails_version.items()}
+        clicks_by_version = {k: len(v) for k, v in click_emails_version.items()}
 
         return {
-            'unique_opens':      opens,
-            'unique_clicks':     clicks,
+            'unique_opens':      len(open_emails),
+            'unique_clicks':     len(click_emails),
             'opens_by_batch':    opens_by_batch,
             'clicks_by_batch':   clicks_by_batch,
             'opens_by_version':  opens_by_version,
