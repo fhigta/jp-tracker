@@ -168,7 +168,7 @@ def stats():
         opens_by_version  = {k: len(v) for k, v in open_emails_version.items()}
         clicks_by_version = {k: len(v) for k, v in click_emails_version.items()}
 
-        return {
+        payload = {
             'unique_opens':      len(open_emails),
             'unique_clicks':     len(click_emails),
             'opens_by_batch':    opens_by_batch,
@@ -177,6 +177,13 @@ def stats():
             'clicks_by_version': clicks_by_version,
             'bounced':           bounced,
         }
+        response = app.response_class(
+            response=json.dumps(payload),
+            status=200,
+            mimetype='application/json',
+        )
+        response.headers['Cache-Control'] = 'no-store'
+        return response
     except Exception as e:
         return {'status': 'error', 'reason': str(e)}, 500
     finally:
@@ -283,9 +290,14 @@ def crm_get():
                 row = c.fetchone()
         finally:
             conn.close()
-        if row:
-            return {'data': json.loads(row[0]), 'updated_at': row[1]}, 200
-        return {'data': [], 'updated_at': None}, 200
+        resp_data = {'data': json.loads(row[0]), 'updated_at': row[1]} if row else {'data': [], 'updated_at': None}
+        response = app.response_class(
+            response=json.dumps(resp_data),
+            status=200,
+            mimetype='application/json',
+        )
+        response.headers['Cache-Control'] = 'no-store'
+        return response
     except Exception as e:
         return {'status': 'error', 'reason': str(e)}, 500
 
