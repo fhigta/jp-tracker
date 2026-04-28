@@ -92,8 +92,11 @@ def track_click():
     redirect_url = request.args.get('redirect', 'https://calendly.com/jpfigallo-concierge/30min')
     version      = request.args.get('version', '')
     batch        = request.args.get('batch', '')
-    log_event('click', email, batch, version,
-              request.remote_addr, request.headers.get('User-Agent', ''))
+    try:
+        log_event('click', email, batch, version,
+                  request.remote_addr, request.headers.get('User-Agent', ''))
+    except Exception:
+        pass  # always redirect even if DB write fails
     return redirect(redirect_url)
 
 
