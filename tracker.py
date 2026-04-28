@@ -209,7 +209,7 @@ def events():
                        MAX(timestamp)  AS last_seen,
                        COUNT(*)        AS count
                 FROM events
-                WHERE event_type IN ('open', 'click') AND email <> ''
+                WHERE event_type IN ('open', 'click') AND email <> '' AND email IS NOT NULL
                 GROUP BY event_type, lower(email)
                 ORDER BY last_seen DESC
             """)
