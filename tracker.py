@@ -22,6 +22,22 @@ def _db_url():
 def get_conn():
     return psycopg2.connect(_db_url())
 
+# Maps campaign slug → crm_data row id.
+# The Lakes events have campaign='' (legacy) or 'the_lakes'; both map to slot 1.
+# North Lakes events use campaign='north_lakes', stored in slot 2.
+_CRM_SLOT = {'': 1, 'the_lakes': 1, 'north_lakes': 2}
+
+
+def _campaign_where(campaign):
+    """Return (sql_fragment, params) for a campaign WHERE condition.
+    The Lakes filter includes legacy rows that have campaign='' or NULL."""
+    if not campaign:
+        return '', ()
+    if campaign == 'the_lakes':
+        return "(campaign = %s OR campaign = '' OR campaign IS NULL)", (campaign,)
+    return 'campaign = %s', (campaign,)
+
+
 def init_db():
     url = _db_url()
     if not url:
@@ -49,20 +65,24 @@ def init_db():
                     updated_at TEXT
                 )
             ''')
+            # Add campaign column to events if not present (migration-safe on Postgres 9.6+)
+            c.execute("""
+                ALTER TABLE events ADD COLUMN IF NOT EXISTS campaign TEXT DEFAULT ''
+            """)
         conn.commit()
     finally:
         conn.close()
 
-def log_event(event_type, email, batch, ab_version, ip, user_agent):
+def log_event(event_type, email, batch, ab_version, ip, user_agent, campaign=''):
     conn = get_conn()
     try:
         with conn.cursor() as c:
             c.execute(
                 '''INSERT INTO events
-                       (event_type, email, batch, ab_version, timestamp, ip, user_agent)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)''',
+                       (event_type, email, batch, ab_version, timestamp, ip, user_agent, campaign)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)''',
                 (event_type, email, batch, ab_version,
-                 datetime.datetime.utcnow().isoformat(), ip, user_agent)
+                 datetime.datetime.utcnow().isoformat(), ip, user_agent, campaign)
             )
         conn.commit()
     finally:
@@ -73,11 +93,12 @@ def log_event(event_type, email, batch, ab_version, ip, user_agent):
 
 @app.route('/track/open')
 def track_open():
-    email   = request.args.get('email', '')
-    batch   = request.args.get('batch', '')
-    version = request.args.get('version', '')
+    email    = request.args.get('email', '')
+    batch    = request.args.get('batch', '')
+    version  = request.args.get('version', '')
+    campaign = request.args.get('campaign', '')
     log_event('open', email, batch, version,
-              request.remote_addr, request.headers.get('User-Agent', ''))
+              request.remote_addr, request.headers.get('User-Agent', ''), campaign)
     pixel = (
         b'GIF89a\x01\x00\x01\x00\x80\x00\x00'
         b'\xff\xff\xff\x00\x00\x00!\xf9\x04'
@@ -92,9 +113,10 @@ def track_click():
     redirect_url = request.args.get('redirect', 'https://calendly.com/jpfigallo-concierge/30min')
     version      = request.args.get('version', '')
     batch        = request.args.get('batch', '')
+    campaign     = request.args.get('campaign', '')
     try:
         log_event('click', email, batch, version,
-                  request.remote_addr, request.headers.get('User-Agent', ''))
+                  request.remote_addr, request.headers.get('User-Agent', ''), campaign)
     except Exception:
         pass  # always redirect even if DB write fails
     return redirect(redirect_url)
@@ -109,9 +131,13 @@ def stats():
     except Exception as e:
         return {'status': 'error', 'reason': str(e)}, 500
     try:
+        campaign = request.args.get('campaign', '')
+        slot_id  = _CRM_SLOT.get(campaign, 1)
+        camp_sql, camp_params = _campaign_where(campaign)
+
         with conn.cursor() as c:
-            # Build CRM email -> batch_time lookup from the Neon mirror
-            c.execute('SELECT data FROM crm_data WHERE id = 1')
+            # Build CRM email -> batch_time lookup from the campaign's Neon mirror slot
+            c.execute('SELECT data FROM crm_data WHERE id = %s', (slot_id,))
             crm_row = c.fetchone()
             crm_batch_map = {}
             bounced = 0
@@ -134,12 +160,14 @@ def stats():
                     return stored_batch
                 return crm_batch_map.get(email.lower(), '')
 
-            # Fetch raw event rows (non-empty email only)
-            c.execute("""
+            # Fetch raw event rows filtered by campaign
+            camp_clause = ('AND ' + camp_sql) if camp_sql else ''
+            c.execute(f"""
                 SELECT event_type, lower(email) AS email, batch, ab_version
                 FROM events
                 WHERE event_type IN ('open', 'click') AND email <> ''
-            """)
+                {camp_clause}
+            """, camp_params)
             raw_events = c.fetchall()
 
         # Aggregate with CRM-resolved batch labels
@@ -200,8 +228,12 @@ def events():
     except Exception as e:
         return json.dumps({'error': str(e)}), 500
     try:
+        campaign = request.args.get('campaign', '')
+        camp_sql, camp_params = _campaign_where(campaign)
+        camp_clause = ('AND ' + camp_sql) if camp_sql else ''
+
         with conn.cursor() as c:
-            c.execute("""
+            c.execute(f"""
                 SELECT event_type,
                        lower(email)    AS email,
                        MIN(ab_version) AS ab_version,
@@ -210,9 +242,10 @@ def events():
                        COUNT(*)        AS count
                 FROM events
                 WHERE event_type IN ('open', 'click') AND email <> '' AND email IS NOT NULL
+                {camp_clause}
                 GROUP BY event_type, lower(email)
                 ORDER BY last_seen DESC
-            """)
+            """, camp_params)
             rows = c.fetchall()
         return json.dumps([{
             'event_type': r[0],
@@ -221,7 +254,7 @@ def events():
             'first_seen': r[3],
             'last_seen':  r[4],
             'count':      r[5],
-        } for r in rows])
+        } for r in rows]), 200, {'Cache-Control': 'no-store'}
     except Exception as e:
         return json.dumps({'error': str(e)}), 500
     finally:
@@ -255,6 +288,8 @@ def calendly_webhook():
 @app.route('/crm/update', methods=['POST'])
 def crm_update():
     try:
+        campaign = request.args.get('campaign', '')
+        slot_id  = _CRM_SLOT.get(campaign, 1)
         data = request.get_json(silent=True) or []
         conn = get_conn()
         try:
@@ -266,22 +301,24 @@ def crm_update():
                 ''')
                 c.execute(
                     '''INSERT INTO crm_data (id, data, updated_at)
-                       VALUES (1, %s, %s)
+                       VALUES (%s, %s, %s)
                        ON CONFLICT (id) DO UPDATE SET
                            data       = EXCLUDED.data,
                            updated_at = EXCLUDED.updated_at''',
-                    (json.dumps(data), datetime.datetime.utcnow().isoformat())
+                    (slot_id, json.dumps(data), datetime.datetime.utcnow().isoformat())
                 )
             conn.commit()
         finally:
             conn.close()
-        return {'status': 'ok', 'rows': len(data)}, 200
+        return {'status': 'ok', 'rows': len(data), 'campaign': campaign or 'the_lakes', 'slot': slot_id}, 200
     except Exception as e:
         return {'status': 'error', 'reason': str(e)}, 500
 
 @app.route('/crm', methods=['GET'])
 def crm_get():
     try:
+        campaign = request.args.get('campaign', '')
+        slot_id  = _CRM_SLOT.get(campaign, 1)
         conn = get_conn()
         try:
             with conn.cursor() as c:
@@ -290,7 +327,7 @@ def crm_get():
                         id INTEGER PRIMARY KEY, data TEXT, updated_at TEXT
                     )
                 ''')
-                c.execute('SELECT data, updated_at FROM crm_data WHERE id = 1')
+                c.execute('SELECT data, updated_at FROM crm_data WHERE id = %s', (slot_id,))
                 row = c.fetchone()
         finally:
             conn.close()
